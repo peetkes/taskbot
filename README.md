@@ -238,7 +238,8 @@ throws `XDMP-MAXTASKS`, then the `$policy` will govern behavior.
 If `$mode` is `spawn-sync`, the `xdmp:spawn-function` is called whenever
 there is enough room on the taskserver-queue. It does not make use of the
 try catch structure because this will cause a more sequential handling
-of all spawned tasks. The `$policy` will govern behavior.
+of all spawned tasks. The `$policy` will govern behavior whenever the
+taskserver-queue is full.
 
 Policies include:
 
