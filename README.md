@@ -226,7 +226,7 @@ a segment of `$size` sequential items from `$list`.
 Any map is supplied as `$fn-options`,
 it will be passed to `$fn` for each segment.
 
-The `$mode` may be `spawn` (default) or `invoke`,
+The `$mode` may be `spawn`(default), `spawn-sync` or `invoke`,
 and governs whether each segment is processed using
 `xdmp:spawn-function` or `xdmp:invoke-function`.
 If `$eval-options` are supplied, they will be passed to the
@@ -234,6 +234,12 @@ If `$eval-options` are supplied, they will be passed to the
 
 If `$mode` is `spawn` (default), and the call to `xdmp:spawn-function`
 throws `XDMP-MAXTASKS`, then the `$policy` will govern behavior.
+
+If `$mode` is `spawn-sync`, the `xdmp:spawn-function` is called whenever
+there is enough room on the taskserver-queue. It does not make use of the
+try catch structure because this will cause a more sequential handling
+of all spawned tasks. The `$policy` will govern behavior.
+
 Policies include:
 
 * `abort`: re-throw the `XDMP-MAXTASKS` error, aborting the work.

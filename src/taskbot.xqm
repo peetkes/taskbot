@@ -69,6 +69,32 @@ declare variable $OPTIONS-UPDATE as element(eval:options) := (
 
 declare variable $SERVER as xs:string := xdmp:server-name(xdmp:server()) ;
 
+declare function m:get-server-status() as element(mlss:server-status)
+{
+  xdmp:server-status(xdmp:host(), xdmp:group-servers(xdmp:group())[xdmp:server-name(.) = 'TaskServer'])
+};
+
+declare function m:queue-has-space() as xs:boolean
+{
+  let $server-stat :=  m:get-server-status()
+  let $queue-size := $server-stat//mlss:queue-size
+  let $queue-limit := $server-stat//mlss:queue-limit
+  return xs:integer($queue-size) lt xs:integer($queue-limit) - 10
+};
+
+declare function m:get-running-requests() as xs:integer{
+  fn:count(m:get-server-status()//mlss:request-status)
+};
+
+declare function m:get-active-threads() as xs:integer{
+  xs:integer(m:get-server-status()//mlss:threads)
+};
+
+declare function m:get-queue-size() as xs:integer
+{
+ xs:integer(m:get-server-status()//mlss:queue-size)
+};
+
 declare function m:log(
   $label as xs:string,
   $list as xs:anyAtomicType*,
@@ -170,6 +196,50 @@ as element(eval:options)
   </options>
 };
 
+declare function m:spawn-function-with-policy-sync(
+  $fn as function() as item()*,
+  $eval-options as element(eval:options)?,
+  $policy as xs:string,
+  $sleep as xs:integer
+) as item()*
+{
+  m:maybe-fatal(),
+  m:debug(
+    'spawn-function-with-policy-sync',
+    ('function', xdmp:describe($fn),
+      'eval-options', xdmp:describe($eval-options),
+      $policy, $sleep)),
+  if (m:queue-has-space())
+  then
+    xdmp:spawn-function($fn, $eval-options)
+  else switch($policy)
+    case 'abort' return m:error('ABORT','call aborted because of policy')
+    case 'caller-blocks' return (
+      (: Back off and retry, with a cap. :)
+      xdmp:sleep($sleep),
+      m:spawn-function-with-policy-sync(
+        $fn, $eval-options, $policy,
+        min((2 * $sleep, $m:MAX-SLEEP))))
+    case 'caller-runs' return xdmp:invoke-function($fn, $eval-options)
+    case 'discard' return m:info(
+      'spawn-function-with-policy-sync',
+      ('discarding task', xdmp:describe($fn), 'due to XDMP-MAXTASKS'))
+    default return m:error(
+      'BADPOLICY',
+      ('supported policies are:',
+        '"abort", "caller-runs", "caller-blocks", "discard"'))
+};
+
+declare function m:spawn-function-with-policy-sync(
+  $fn as function() as item()*,
+  $eval-options as element(eval:options)?,
+  $policy as xs:string?)
+as item()*
+{
+  m:spawn-function-with-policy-sync(
+    $fn, $eval-options, $policy, 1)
+};
+
 declare function m:spawn-function-with-policy(
   $fn as function() as item()*,
   $eval-options as element(eval:options)?,
@@ -229,13 +299,16 @@ as item()*
 {
   m:maybe-fatal(),
   m:debug('segment-process', ($label, $mode, $policy)),
+  xdmp:trace("taskbot", "active threads=" || m:get-active-threads() || " running requests=" || m:get-running-requests() ||" queue-size=" || m:get-queue-size()),
   switch($mode)
   case 'invoke' return xdmp:invoke-function(
     $fn, $eval-options)
   case 'spawn' return m:spawn-function-with-policy(
     $fn, $eval-options, $policy)
+  case 'spawn-sync' return m:spawn-function-with-policy-sync(
+    $fn, $eval-options, $policy)
   default return m:error(
-    'BADMODE', ($mode, 'must be spawn or invoke'))
+    'BADMODE', ($mode, 'must be spawn, spawn-sync or invoke'))
 };
 
 (: Break up large lists into segments,
@@ -306,13 +379,34 @@ declare function m:list-segment-process(
   $label as xs:string,
   $fn as function(item()+, map:map?) as item()*,
   $fn-options as map:map?,
+  $eval-options as element(eval:options)?,
+  $mode as xs:string?)
+as item()*
+{
+  m:list-segment-process(
+    $list-all, $size, $label,
+    $fn, $fn-options, $eval-options,
+    $mode, 'caller-runs', ())
+};
+
+(:
+ : Shortcut when the caller does not want to specify some options.
+ : This can be used as an entry point.
+ :)
+declare function m:list-segment-process(
+  $list-all as item()*,
+  $size as xs:integer,
+  $label as xs:string,
+  $fn as function(item()+, map:map?) as item()*,
+  $fn-options as map:map?,
   $eval-options as element(eval:options)?)
 as item()*
 {
   m:list-segment-process(
     $list-all, $size, $label,
     $fn, $fn-options, $eval-options,
-    'spawn', 'caller-runs', ())
+    if ($eval-options//eval:result eq fn:true()) then 'spawn-sync' else 'spawn',
+    'caller-runs', ())
 };
 
 (:
